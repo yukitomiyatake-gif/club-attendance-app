@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase/supabase.dart';
 
 import 'models.dart';
 
@@ -16,12 +16,10 @@ const _maxReasonLength = 200;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Supabase.initialize(
-    url: _supabaseUrl,
-    publishableKey: _supabaseAnonKey,
-  );
   runApp(const ClubAttendanceApp());
 }
+
+final supabaseClient = SupabaseClient(_supabaseUrl, _supabaseAnonKey);
 
 class ClubAttendanceApp extends StatelessWidget {
   const ClubAttendanceApp({super.key});
@@ -59,7 +57,7 @@ class _HomePageState extends State<HomePage> {
   Member? _currentMember;
   String? _message;
 
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseClient get _client => supabaseClient;
 
   @override
   void initState() {
