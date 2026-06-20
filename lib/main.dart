@@ -616,7 +616,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 ButtonSegment(
                   value: LoginMode.admin,
-                  label: Text('管理者'),
+                  label: Text('管理'),
                   icon: Icon(Icons.admin_panel_settings),
                 ),
               ],
