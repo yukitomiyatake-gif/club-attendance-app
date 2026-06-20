@@ -38,6 +38,7 @@ migrate_working_dir/
 
 # Local generated helper files
 /tool/
+/.tools/
 
 # Symbolication related
 app.*.symbols
