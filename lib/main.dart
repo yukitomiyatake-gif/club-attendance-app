@@ -605,6 +605,9 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 12),
             SegmentedButton<LoginMode>(
+              style: const ButtonStyle(
+                minimumSize: WidgetStatePropertyAll(Size(92, 40)),
+              ),
               segments: const [
                 ButtonSegment(
                   value: LoginMode.member,
