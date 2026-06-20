@@ -21,6 +21,8 @@ void main() async {
 
 final supabaseClient = SupabaseClient(_supabaseUrl, _supabaseAnonKey);
 
+enum LoginMode { member, admin }
+
 class ClubAttendanceApp extends StatelessWidget {
   const ClubAttendanceApp({super.key});
 
@@ -48,11 +50,18 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final _nameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _adminNameController = TextEditingController(text: 'admin');
+  final _adminPasswordController = TextEditingController();
+  final _newMemberNameController = TextEditingController();
+  final _newMemberPasswordController = TextEditingController();
 
   DateTime _selectedDate = DateTime.now();
   DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
   bool _loading = true;
   bool _authLoading = false;
+  bool _adminLoading = false;
+  bool _isAdmin = false;
+  LoginMode _loginMode = LoginMode.member;
   AppData _data = AppData.initial();
   Member? _currentMember;
   String? _message;
@@ -69,6 +78,10 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _nameController.dispose();
     _passwordController.dispose();
+    _adminNameController.dispose();
+    _adminPasswordController.dispose();
+    _newMemberNameController.dispose();
+    _newMemberPasswordController.dispose();
     super.dispose();
   }
 
@@ -88,7 +101,9 @@ class _HomePageState extends State<HomePage> {
           )
           .toList();
 
-      final memberNames = {for (final member in members) member.id: member.name};
+      final memberNames = {
+        for (final member in members) member.id: member.name
+      };
       final recordsResult = await _client
           .from('attendance_records')
           .select('id, member_id, date, status, reason')
@@ -170,19 +185,15 @@ class _HomePageState extends State<HomePage> {
       );
       final verifiedRows = verified as List<dynamic>;
 
-      if (verifiedRows.isNotEmpty) {
-        final row = verifiedRows.first as Map<String, dynamic>;
-        _currentMember = Member(
-          id: row['member_id'] as String,
-          name: row['name'] as String,
-        );
-      } else {
-        final memberId = await _client.rpc(
-          'create_member_with_password',
-          params: {'member_name': name, 'plain_password': password},
-        );
-        _currentMember = Member(id: memberId as String, name: name);
+      if (verifiedRows.isEmpty) {
+        throw Exception('invalid member');
       }
+
+      final row = verifiedRows.first as Map<String, dynamic>;
+      _currentMember = Member(
+        id: row['member_id'] as String,
+        name: row['name'] as String,
+      );
 
       await _loadData();
       if (!mounted) return;
@@ -194,7 +205,162 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       setState(() {
         _authLoading = false;
-        _message = '開始できませんでした。名前が登録済みの場合はパスワードを確認してください。';
+        _message = '登録済みの名前とパスワードを確認してください。';
+      });
+    }
+  }
+
+  Future<void> _adminLogin() async {
+    final adminName = _adminNameController.text.trim();
+    final password = _adminPasswordController.text;
+    if (adminName.isEmpty || password.isEmpty) {
+      setState(() => _message = '管理者名と管理者パスワードを入力してください。');
+      return;
+    }
+    if (adminName.length > _maxNameLength ||
+        password.length < _minPasswordLength ||
+        password.length > _maxPasswordLength) {
+      setState(() => _message = '入力内容の長さを確認してください。');
+      return;
+    }
+
+    setState(() {
+      _adminLoading = true;
+      _message = null;
+    });
+
+    try {
+      final ok = await _client.rpc(
+        'verify_admin_password',
+        params: {'admin_name': adminName, 'plain_password': password},
+      );
+      if (ok != true) {
+        throw Exception('invalid admin');
+      }
+      await _loadData();
+      if (!mounted) return;
+      setState(() {
+        _isAdmin = true;
+        _currentMember = null;
+        _adminLoading = false;
+        _message = '管理者としてログインしました。';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '管理者名または管理者パスワードが違います。';
+      });
+    }
+  }
+
+  Future<void> _addMemberAsAdmin() async {
+    final memberName = _newMemberNameController.text.trim();
+    final memberPassword = _newMemberPasswordController.text;
+    if (memberName.isEmpty || memberPassword.isEmpty) {
+      setState(() => _message = '追加する部員の名前とパスワードを入力してください。');
+      return;
+    }
+    if (memberName.length > _maxNameLength ||
+        memberPassword.length < _minPasswordLength ||
+        memberPassword.length > _maxPasswordLength) {
+      setState(() => _message = '名前は40文字以内、パスワードは4〜72文字にしてください。');
+      return;
+    }
+
+    setState(() => _adminLoading = true);
+    try {
+      await _client.rpc(
+        'admin_create_member_with_password',
+        params: {
+          'admin_name': _adminNameController.text.trim(),
+          'admin_password': _adminPasswordController.text,
+          'member_name': memberName,
+          'member_password': memberPassword,
+        },
+      );
+      _newMemberNameController.clear();
+      _newMemberPasswordController.clear();
+      await _loadData();
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '部員を追加しました。';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '部員を追加できませんでした。名前の重複や入力内容を確認してください。';
+      });
+    }
+  }
+
+  Future<void> _deleteMemberAsAdmin(Member member) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('部員を削除'),
+        content: Text('${member.name} さんを削除しますか？出欠記録も削除されます。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _adminLoading = true);
+    try {
+      await _client.rpc(
+        'admin_delete_member',
+        params: {
+          'admin_name': _adminNameController.text.trim(),
+          'admin_password': _adminPasswordController.text,
+          'target_member_id': member.id,
+        },
+      );
+      await _loadData();
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '部員を削除しました。';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '部員を削除できませんでした。';
+      });
+    }
+  }
+
+  Future<void> _moveMemberAsAdmin(Member member, int direction) async {
+    setState(() => _adminLoading = true);
+    try {
+      await _client.rpc(
+        'admin_move_member',
+        params: {
+          'admin_name': _adminNameController.text.trim(),
+          'admin_password': _adminPasswordController.text,
+          'target_member_id': member.id,
+          'move_direction': direction,
+        },
+      );
+      await _loadData();
+      if (!mounted) return;
+      setState(() => _adminLoading = false);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _adminLoading = false;
+        _message = '並べ替えできませんでした。';
       });
     }
   }
@@ -316,8 +482,9 @@ class _HomePageState extends State<HomePage> {
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           title: Text(DateFormat('M月d日').format(parsedDate)),
-                          subtitle:
-                              record.reason.isEmpty ? null : Text(record.reason),
+                          subtitle: record.reason.isEmpty
+                              ? null
+                              : Text(record.reason),
                           trailing: Text(record.status.label),
                         );
                       },
@@ -354,7 +521,9 @@ class _HomePageState extends State<HomePage> {
   void _signOut() {
     setState(() {
       _currentMember = null;
+      _isAdmin = false;
       _passwordController.clear();
+      _adminPasswordController.clear();
       _message = null;
     });
   }
@@ -376,7 +545,7 @@ class _HomePageState extends State<HomePage> {
             onPressed: _loadData,
             icon: const Icon(Icons.refresh),
           ),
-          if (currentMember != null)
+          if (currentMember != null || _isAdmin)
             IconButton(
               tooltip: '終了',
               onPressed: _signOut,
@@ -389,9 +558,19 @@ class _HomePageState extends State<HomePage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (currentMember == null) _buildStartCard() else ...[
+                if (currentMember == null && !_isAdmin)
+                  _buildStartCard()
+                else if (_isAdmin) ...[
+                  _buildAdminCard(),
+                  const SizedBox(height: 16),
+                  _buildMonthlySummaryCard(selectedMonthLabel),
+                  const SizedBox(height: 16),
+                  _buildDateCard(dailySummary),
+                  const SizedBox(height: 16),
+                  _buildDailyStatusCard(),
+                ] else ...[
                   Text(
-                    '${currentMember.name} さん',
+                    '${currentMember!.name} さん',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 16),
@@ -413,6 +592,81 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildStartCard() {
+    final isAdminLogin = _loginMode == LoginMode.admin;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isAdminLogin ? '管理者ログイン' : '部員ログイン',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<LoginMode>(
+              segments: const [
+                ButtonSegment(
+                  value: LoginMode.member,
+                  label: Text('部員'),
+                  icon: Icon(Icons.person),
+                ),
+                ButtonSegment(
+                  value: LoginMode.admin,
+                  label: Text('管理者'),
+                  icon: Icon(Icons.admin_panel_settings),
+                ),
+              ],
+              selected: {_loginMode},
+              onSelectionChanged: (selected) {
+                setState(() {
+                  _loginMode = selected.first;
+                  _message = null;
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: isAdminLogin ? _adminNameController : _nameController,
+              maxLength: _maxNameLength,
+              inputFormatters: [
+                LengthLimitingTextInputFormatter(_maxNameLength),
+              ],
+              decoration: InputDecoration(
+                labelText: isAdminLogin ? '管理者名' : '名前',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller:
+                  isAdminLogin ? _adminPasswordController : _passwordController,
+              obscureText: true,
+              maxLength: _maxPasswordLength,
+              inputFormatters: [
+                LengthLimitingTextInputFormatter(_maxPasswordLength),
+              ],
+              decoration: InputDecoration(
+                labelText: isAdminLogin ? '管理者パスワード' : 'パスワード',
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: isAdminLogin
+                  ? (_adminLoading ? null : _adminLogin)
+                  : (_authLoading ? null : _startOrRegister),
+              child: Text(
+                isAdminLogin
+                    ? (_adminLoading ? '確認中...' : '管理者として開始')
+                    : (_authLoading ? '確認中...' : '開始'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdminCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -420,33 +674,78 @@ class _HomePageState extends State<HomePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '名前とパスワード',
+              '部員の管理',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _nameController,
+              controller: _newMemberNameController,
               maxLength: _maxNameLength,
               inputFormatters: [
                 LengthLimitingTextInputFormatter(_maxNameLength),
               ],
-              decoration: const InputDecoration(labelText: '名前'),
+              decoration: const InputDecoration(labelText: '追加する部員名'),
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _passwordController,
+              controller: _newMemberPasswordController,
               obscureText: true,
               maxLength: _maxPasswordLength,
               inputFormatters: [
                 LengthLimitingTextInputFormatter(_maxPasswordLength),
               ],
-              decoration: const InputDecoration(labelText: 'パスワード'),
+              decoration: const InputDecoration(labelText: '初期パスワード'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _adminLoading ? null : _addMemberAsAdmin,
+              icon: const Icon(Icons.person_add),
+              label: Text(_adminLoading ? '処理中...' : '部員を追加'),
             ),
             const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _authLoading ? null : _startOrRegister,
-              child: Text(_authLoading ? '確認中...' : '開始'),
-            ),
+            if (_data.members.isEmpty)
+              const Text('部員がまだ登録されていません。')
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _data.members.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final member = _data.members[index];
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(member.name),
+                    trailing: Wrap(
+                      spacing: 4,
+                      children: [
+                        IconButton(
+                          tooltip: '上へ',
+                          onPressed: index == 0 || _adminLoading
+                              ? null
+                              : () => _moveMemberAsAdmin(member, -1),
+                          icon: const Icon(Icons.arrow_upward),
+                        ),
+                        IconButton(
+                          tooltip: '下へ',
+                          onPressed:
+                              index == _data.members.length - 1 || _adminLoading
+                                  ? null
+                                  : () => _moveMemberAsAdmin(member, 1),
+                          icon: const Icon(Icons.arrow_downward),
+                        ),
+                        IconButton(
+                          tooltip: '削除',
+                          onPressed: _adminLoading
+                              ? null
+                              : () => _deleteMemberAsAdmin(member),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
           ],
         ),
       ),
