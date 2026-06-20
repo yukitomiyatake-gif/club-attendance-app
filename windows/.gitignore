@@ -1,0 +1,4 @@
+ephemeral/
+**/GeneratedPluginRegistrant.*
+.idea/
+build/
