@@ -421,9 +421,17 @@ grant select on public.attendance_records to anon;
 
 revoke execute on function public.create_member_with_password(text, text) from anon;
 revoke execute on function public.create_member_with_password(text, text) from public;
+revoke execute on function public.verify_member_password(text, text) from public;
+revoke execute on function public.save_member_attendance(text, text, date, text, text) from public;
+revoke execute on function public.bootstrap_admin(text, text) from anon;
+revoke execute on function public.bootstrap_admin(text, text) from public;
+revoke execute on function public.verify_admin_password(text, text) from public;
+revoke execute on function public.admin_create_member_with_password(text, text, text, text) from public;
+revoke execute on function public.admin_delete_member(text, text, uuid) from public;
+revoke execute on function public.admin_move_member(text, text, uuid, integer) from public;
+
 grant execute on function public.verify_member_password(text, text) to anon;
 grant execute on function public.save_member_attendance(text, text, date, text, text) to anon;
-grant execute on function public.bootstrap_admin(text, text) to anon;
 grant execute on function public.verify_admin_password(text, text) to anon;
 grant execute on function public.admin_create_member_with_password(text, text, text, text) to anon;
 grant execute on function public.admin_delete_member(text, text, uuid) to anon;
